@@ -36,6 +36,7 @@
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 extern kern_return_t thread_terminate(thread_t);
 extern void sweet_hid_touch(int finger, int down, int x, int y);
+extern unsigned int processor_avail_count;      /* osfmk/kern/processor.c */
 void sweet_touch_init(void);
 
 #define TS_PERIC0_PA     0x10430000u
@@ -433,6 +434,25 @@ ts_thread(void *arg, wait_result_t result)
 	(void)PE_parse_boot_argn("sweettouchdelay", &delay_s, sizeof(delay_s));
 	printf("SWEET TOUCH: S21 slsi_ts, starting in %u s\n", delay_s);
 	ts_sleep(delay_s * 1000u);
+
+	/*
+	 * ACPM before PSCI CPU_ON breaks CPU_ON (phone: "cpu=1 startup timeout",
+	 * both from the shim and from this thread at +20 s; SweetCPU starts the
+	 * secondaries only ~45 s after boot). Wait until every requested CPU is
+	 * up (boot-arg cpus, default 1), at most 180 s.
+	 */
+	unsigned want = 1, waited = 0;
+	(void)PE_parse_boot_argn("cpus", &want, sizeof(want));
+	while (processor_avail_count < want && waited < 180) {
+		ts_sleep(1000);
+		waited++;
+	}
+	printf("SWEET TOUCH: %u/%u CPUs up after %u s more; powering the IC\n",
+	    processor_avail_count, want, waited);
+	if (processor_avail_count < want) {
+		printf("SWEET TOUCH: CPUs not all up; ACPM skipped to keep CPU_ON working\n");
+		goto out;
+	}
 
 	ts.peric = ml_io_map(TS_PERIC0_PA, 0x1000);
 	ts.alive = ml_io_map(TS_ALIVE_PA, 0x1000);
