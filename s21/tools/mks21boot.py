@@ -40,6 +40,9 @@ def main():
     ap.add_argument("--payload")
     ap.add_argument("--stock-boot")
     ap.add_argument("--vendor-boot")
+    ap.add_argument("--chain", metavar="LINEAGE_BOOT_IMG",
+                    help="test shims (--gictest build): append that boot.img's Linux Image 2 MiB after "
+                         "the shim and use its ramdisk/cmdline, so Android boots after the test")
     a = ap.parse_args()
 
     shim = open(a.shim, "rb").read()
@@ -66,10 +69,30 @@ def main():
     if not payload:
         ramdisk = b"\0" * 4096   # S-Boot gets a non-empty ramdisk either way
 
+    cmdline = b""
+    if a.chain:
+        assert not payload, "--chain and --payload are exclusive"
+        lin = open(a.chain, "rb").read()
+        assert lin[:8] == b"ANDROID!" and struct.unpack_from("<I", lin, 40)[0] == 3
+        ksz, rsz = struct.unpack_from("<II", lin, 8)
+        linux = lin[4096:4096 + ksz]
+        assert linux[0x38:0x3C] == b"ARMd", "--chain needs the ORIGINAL LineageOS boot.img"
+        roff = 4096 + ((ksz + 4095) // 4096) * 4096
+        ramdisk = lin[roff:roff + rsz]
+        cmdline = lin[44:44 + 1536].rstrip(b"\0")
+        chain_off = 0x200000          # 2 MiB: keeps Linux's base 2 MiB aligned
+        assert len(shim) < chain_off
+        image_size = chain_off + struct.unpack_from("<Q", linux, 16)[0]
+        shim = bytearray(shim + b"\0" * (chain_off - len(shim)))
+        struct.pack_into("<Q", shim, 16, image_size)   # header image_size covers Linux + its bss
+        shim = bytes(shim) + linux
+        lead = 0
+
     hdr = bytearray(4096)
     hdr[0:8] = b"ANDROID!"
     struct.pack_into("<IIII", hdr, 8, len(shim), len(ramdisk), os_version, 1580)
     struct.pack_into("<I", hdr, 40, 3)
+    hdr[44:44 + len(cmdline)] = cmdline
     boot = bytes(hdr) + pad(shim) + pad(ramdisk)
     assert len(boot) <= 64 * 1024 * 1024, "boot partition is 64 MiB"
 

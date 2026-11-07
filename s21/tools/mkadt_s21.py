@@ -37,8 +37,10 @@ GICR, GICR_SIZE = 0x10240000, 0x200000
 FB, FB_SIZE = 0xfa000000, 0xa00000
 SWEET_ECID = 0x5332310000000001  # 'S21' + 1, synthetic (not the phone's)
 FB_W, FB_H, FB_STRIDE = 1080, 2400, 1080 * 4
-# Internal UFS host (ufshc@1d84000 "ufs_mem"); QEMU virt has none
-UFS, UFS_SIZE = 0x01d84000, 0x3000
+# S21 Exynos UFS (DT ufs@0x13100000): standard HCI, then the "exynos-specific hci"
+# vendor block. Two reg pairs select the Exynos path in sweet_ufs.c (xnu patch 0083).
+UFS, UFS_SIZE = 0x13100000, 0x200
+UFS_VS, UFS_VS_SIZE = 0x13101100, 0x100
 # arm,armv8-timer clock-frequency 26 MHz; virtual timer = PPI 11 = INTID 27 (Linux: "(virt)")
 TIMEBASE = 26000000
 VTIMER_INTID = 27
@@ -81,7 +83,7 @@ def node(name, props=(), children=()):
     return n
 
 
-def build(seed=None, qemu=False, highmem=False):
+def build(seed=None, qemu=False, highmem=False, no_ufs=False):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py)."""
     phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
     # Carve the panic log off the top so the kernel never allocates over it.
@@ -210,8 +212,8 @@ def build(seed=None, qemu=False, highmem=False):
     # bsd/dev/sweet_ufs.c: the UFS host ABL leaves running (absolute physical reg).
     ufs = node('sweet-ufs', [
         ph(),
-        ('compatible', cstr('qcom,ufshc')),
-        ('reg', u64(UFS, UFS_SIZE)),
+        ('compatible', cstr('samsung,exynos-ufs')),
+        ('reg', u64(UFS, UFS_SIZE, UFS_VS, UFS_VS_SIZE)),
     ])
 
     # pmap_compute_max_asids requires the node even when no overrides are set.
@@ -248,14 +250,13 @@ def build(seed=None, qemu=False, highmem=False):
         ('manufacturer', cstr('Apple Inc.')),
         ('#address-cells', u32(2)),
         ('#size-cells', u32(2)),
-    # S21: no sweet-ufs node. bsd/dev/sweet_ufs.c drives a Qualcomm UFSHC; the S21's
-    # Exynos UFS (0x13100000) needs its own driver. Without the node the root falls
-    # back to the ramdisk/console path, which is this milestone's goal.
-    ], [chosen, defaults, cpus, arm_io, fbcon, buttons, pram] + product)
+    # S21: /sweet-ufs = Exynos UFS (xnu patch 0083 adds the Exynos quirks to sweet_ufs.c).
+    # --no-ufs leaves it out (RAM-disk boots such as userland/sweet-init).
+    ], [chosen, defaults, cpus, arm_io, fbcon, buttons, pram] + product + ([] if no_ufs else [ufs]))
 
 
 if __name__ == '__main__':
-    root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv)
+    root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv, no_ufs='--no-ufs' in sys.argv)
     blob = adt.serialize(root)
     open(sys.argv[1], 'wb').write(blob)
     if '--dump' in sys.argv:

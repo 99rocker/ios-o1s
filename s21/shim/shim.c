@@ -27,12 +27,56 @@ static const char *stage;
  * TE, so later writes (ours, then xnu's console) appear by themselves
  * (shim-test test 6). XNU never touches DECON, so the mask stays clear.
  */
+static uint32_t saved_trig;
+
 void display_kick(void)
 {
 	volatile uint32_t *trig = (volatile uint32_t *)DECON0_TRIG_CON;
-	*trig = *trig & ~HW_TRIG_MASK_DECON;
+	saved_trig = *trig;
+	*trig = saved_trig & ~HW_TRIG_MASK_DECON;
 	__asm__ volatile("dsb sy" ::: "memory");
 }
+
+#if defined(GICTEST) || defined(UFSTEST)
+#ifdef GICTEST
+#include "gictest.h"
+#endif
+#ifdef UFSTEST
+#include "ufs.h"
+#endif
+
+extern char _head[];
+
+static void delay_ms(unsigned ms)
+{
+	uint64_t t0 = rsr("cntpct_el0");
+	while (rsr("cntpct_el0") - t0 < (uint64_t)ms * 26000)	/* 26 MHz counter */
+		;
+}
+
+/*
+ * Put TRIG_CON back as S-Boot left it before Linux runs: an unmasked
+ * trigger makes Linux's dsim_irq_handler fault during probe (shim-test 6).
+ */
+static void display_restore(void)
+{
+	*(volatile uint32_t *)DECON0_TRIG_CON = saved_trig;
+	__asm__ volatile("dsb sy" ::: "memory");
+	delay_ms(500);
+}
+
+typedef void (*linux_entry_t)(uint64_t dtb, uint64_t x1, uint64_t x2, uint64_t x3);
+
+static void __attribute__((noreturn)) boot_linux(uint64_t dtb)
+{
+	/* mks21boot.py --chain places the LineageOS Image 2 MiB after our header. */
+	linux_entry_t entry = (linux_entry_t)((uintptr_t)_head + 0x200000);
+	__asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");
+	entry(dtb, 0, 0, 0);
+	for (;;)
+		__asm__ volatile("wfe");
+}
+#endif
 
 static void __attribute__((noreturn)) halt(void)
 {
@@ -44,6 +88,12 @@ static void __attribute__((noreturn)) halt(void)
 
 void exc_handler(uint64_t slot, uint64_t *regs)
 {
+#ifdef GICTEST
+	if (slot == 5) {	/* IRQ from current EL, SPx: the probe's timer/SGI */
+		gictest_irq();
+		return;
+	}
+#endif
 	con_clear(BLUE);
 	/* No switch: clang turns it into a table of absolute string pointers. */
 	unsigned kind = slot & 3;
@@ -82,6 +132,30 @@ void shim_main(uint64_t dtb)
 	con_hex2("ENTRY", "el=", (uint32_t)(rsr("currentel") >> 2), "sctlr=", (uint32_t)rsr("sctlr_el1"));
 	con_hex("DTB", dtb);
 	con_skip();
+
+#ifdef GICTEST
+	stage = "gictest";
+	gictest_run();
+	con_skip();
+	con_str("LINUX", "booting LineageOS in 20 s");
+	delay_ms(20000);
+	gictest_report(dtb);
+	display_restore();
+	boot_linux(dtb);
+#endif
+
+#ifdef UFSTEST
+	stage = "ufstest";
+	test_ufs();
+	stage = "ufs restore";
+	ufs_restore();
+	con_skip();
+	con_str("LINUX", "booting LineageOS in 40 s");
+	delay_ms(40000);
+	ufs_report(dtb);
+	display_restore();
+	boot_linux(dtb);
+#endif
 
 	stage = "loader";
 	const char *why = loader_boot(dtb);

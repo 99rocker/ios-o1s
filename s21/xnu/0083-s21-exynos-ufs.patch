@@ -1,0 +1,186 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 6b926fe..30467d3 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -17,6 +17,19 @@
+  * Writes are refused unless boot-arg ufsrw=1 is set. Every write is checked
+  * against the partition bounds again right before it is issued, so nothing
+  * outside the named partition can be written.
++ *
++ * Samsung Exynos 2100 (Galaxy S21, o1s): selected when /sweet-ufs has a
++ * second reg pair, the "exynos-specific hci" block. Quirks from Samsung's
++ * o1s kernel (ufs-exynos.c / ufshcd.c), each verified on the phone with the
++ * s21 shim probe (s21/shim/ufs.c):
++ *   - UFSHCD_QUIRK_PRDT_BYTE_GRAN: UTRD offsets/lengths in bytes
++ *   - PRDT_SET_SIZE(12): 4 KiB per PRD entry
++ *   - HCI_UTRL_NEXUS_TYPE (vendor +0x40): bit n = SCSI command in slot n
++ *   - UFSHCD_QUIRK_BROKEN_OCS_FATAL_ERROR: OCS 7 + response result = OCS ok
++ *   - UFSHCI_QUIRK_BROKEN_REQ_LIST_CLR: clear slot n by writing 1 << n
++ *   - S-Boot leaves the device asleep (sense 02/04/02 on every LU): wake it
++ *     with REQUEST SENSE + START STOP UNIT (Active) on the device W-LUN 0xD0,
++ *     as ufshcd_set_dev_pwr_mode() does.
+  */
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ #include <sys/param.h>
+@@ -72,7 +85,10 @@ extern void sweet_usb_probe(void);
+ #define UFS_BLOCK       4096u
+ #define BOUNCE_SIZE     (1u << 20)
+ #define PRDT_CHUNK      (256u << 10)            /* PRDT byte count field: 18 bits */
+-#define PRDT_MAX        (BOUNCE_SIZE / PRDT_CHUNK)
++#define PRDT_CHUNK_EXY  4096u                   /* Exynos: PRDT_SET_SIZE(12) */
++#define PRDT_MAX        (BOUNCE_SIZE / PRDT_CHUNK_EXY)
++#define VS_UTRL_NEXUS   0x40                    /* Exynos vendor HCI_UTRL_NEXUS_TYPE */
++#define UFS_DEVICE_WLUN 0xd0
+ #define CMD_TIMEOUT_NS  (5ull * NSEC_PER_SEC)
+ #define CMD_SPIN_NS     (50ull * NSEC_PER_USEC)
+ #define CMD_SLEEP_NS    (200ull * NSEC_PER_USEC)
+@@ -100,6 +116,8 @@ struct ucd {
+ 
+ static struct {
+ 	vm_offset_t regs;
++	vm_offset_t vs;                         /* Exynos vendor HCI, 0 on Qualcomm */
++	bool exynos;
+ 	vm_offset_t dma;                        /* kernel VA of the DMA allocation */
+ 	uint64_t dma_pa;
+ 	uint8_t lun;
+@@ -171,16 +189,18 @@ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ 	utrd->dw2 = 0x0f;                       /* OCS invalid until updated */
+ 	utrd->ucdba = (uint32_t)ucd_pa;
+ 	utrd->ucdbau = (uint32_t)(ucd_pa >> 32);
+-	utrd->resp = (512u / 4) << 16 | (512u / 4);
++	/* Exynos: offsets and lengths in bytes (UFSHCD_QUIRK_PRDT_BYTE_GRAN). */
++	utrd->resp = su.exynos ? (512u << 16 | 512u) : ((512u / 4) << 16 | (512u / 4));
++	uint32_t n = 0;
+ 	if (len) {
+-		uint32_t n = 0;
+-		for (uint32_t done = 0; done < len; done += PRDT_CHUNK, n++) {
+-			uint32_t chunk = MIN(PRDT_CHUNK, len - done);
++		uint32_t step = su.exynos ? PRDT_CHUNK_EXY : PRDT_CHUNK;
++		for (uint32_t done = 0; done < len; done += step, n++) {
++			uint32_t chunk = MIN(step, len - done);
+ 			ucd->prdt[n].addr_lo = (uint32_t)(bounce_pa + done);
+ 			ucd->prdt[n].addr_hi = (uint32_t)((bounce_pa + done) >> 32);
+ 			ucd->prdt[n].dbc = chunk - 1;
+ 		}
+-		utrd->prdt = (1024u / 4) << 16 | n;
++		utrd->prdt = su.exynos ? (1024u << 16 | n * 16u) : ((1024u / 4) << 16 | n);
+ 	}
+ 
+ 	if (su.cache) {
+@@ -189,7 +209,7 @@ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ 		dma_sync(DMA_UCD + offsetof(struct ucd, resp), sizeof(ucd->resp));
+ 		if (len) {
+ 			dma_clean(DMA_UCD + offsetof(struct ucd, prdt),
+-			    (utrd->prdt & 0xffff) * sizeof(ucd->prdt[0]));
++			    n * sizeof(ucd->prdt[0]));
+ 		}
+ 	} else {
+ 		dma_sync(DMA_UTRL, sizeof(*utrd));
+@@ -202,6 +222,13 @@ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ 			dma_sync(DMA_BOUNCE, len);
+ 		}
+ 	}
++	if (su.exynos) {
++		/* Slot 0 carries a SCSI command; keep the list running after errors. */
++		*(volatile uint32_t *)(su.vs + VS_UTRL_NEXUS) |= 1u;
++		if (!(ufs_rd(REG_UTRLRSR) & 1)) {
++			ufs_wr(REG_UTRLRSR, 1);
++		}
++	}
+ 	__builtin_arm_dsb(0xf);
+ 
+ 	ufs_wr(REG_UTRLDBR, 1);
+@@ -219,7 +246,8 @@ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ 	while (ufs_rd(REG_UTRLDBR) & 1) {
+ 		uint64_t now = mach_absolute_time();
+ 		if (now > deadline) {
+-			ufs_wr(REG_UTRLCLR, ~1u);
++			ufs_wr(REG_UTRLCLR, su.exynos ? 1u : ~1u);     /* Exynos: BROKEN_REQ_LIST_CLR */
++			ufs_wr(REG_IS, ufs_rd(REG_IS));
+ 			printf("SWEET UFS: command 0x%02x timed out\n", cdb[0]);
+ 			return ETIMEDOUT;
+ 		}
+@@ -248,9 +276,14 @@ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ 	}
+ 
+ 	uint32_t ocs = utrd->dw2 & 0xff;
++	if (su.exynos && ocs == 7 && (ucd->resp[6] || ucd->resp[7])) {
++		ocs = 0;                        /* UFSHCD_QUIRK_BROKEN_OCS_FATAL_ERROR */
++	}
+ 	if (ocs || ucd->resp[0] != 0x21 || ucd->resp[6] || ucd->resp[7]) {
+-		printf("SWEET UFS: command 0x%02x failed: ocs 0x%x upiu 0x%x response 0x%x status 0x%x\n",
+-		    cdb[0], ocs, ucd->resp[0], ucd->resp[6], ucd->resp[7]);
++		const uint8_t *sd = &ucd->resp[34];     /* fixed-format sense data */
++		printf("SWEET UFS: command 0x%02x lun 0x%x failed: ocs 0x%x upiu 0x%x response 0x%x status 0x%x sense %x/%02x/%02x\n",
++		    cdb[0], su.lun, ocs, ucd->resp[0], ucd->resp[6], ucd->resp[7],
++		    sd[2] & 0xf, sd[12], sd[13]);
+ 		return EIO;
+ 	}
+ 	return 0;
+@@ -353,6 +386,28 @@ ufs_find_partition(const char *want)
+ 	return ENOENT;
+ }
+ 
++/*
++ * Exynos: S-Boot leaves the UFS device in a low-power mode; every LU answers
++ * NOT READY until the device W-LUN gets START STOP UNIT (POWER CONDITION =
++ * Active), after a REQUEST SENSE that clears its unit attention.
++ */
++static int
++ufs_wake_device(void)
++{
++	static const uint8_t req_sense[6] = { 0x03, 0, 0, 0, 18, 0 };
++	static const uint8_t ssu_active[6] = { 0x1b, 0, 0, 0, 1u << 4, 0 };
++	uint8_t lun = su.lun;
++	int error = EIO;
++
++	su.lun = UFS_DEVICE_WLUN;
++	(void)ufs_scsi(req_sense, sizeof(req_sense), 18, false);
++	for (int i = 0; i < 3 && (error = ufs_scsi(ssu_active, sizeof(ssu_active), 0, false)); i++) {
++	}
++	su.lun = lun;
++	printf("SWEET UFS: device W-LUN START STOP UNIT (active): %d\n", error);
++	return error;
++}
++
+ static int
+ ufs_take_over_host(void)
+ {
+@@ -608,6 +663,15 @@ sweet_ufs_init(void)
+ 	su.wait = (wait == 1);
+ 
+ 	su.regs = ml_io_map(reg[0], reg[1]);
++	if (size >= 4 * sizeof(uintptr_t)) {
++		/*
++		 * Second reg pair: Exynos vendor HCI ("exynos-specific hci",
++		 * 0x13101100 on o1s, not page aligned): map its page, keep the offset.
++		 */
++		vm_offset_t vs_page = reg[2] & ~(vm_offset_t)PAGE_MASK;
++		su.vs = ml_io_map(vs_page, round_page(reg[2] + reg[3]) - vs_page) + (reg[2] - vs_page);
++		su.exynos = true;
++	}
+ 	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
+ 	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+ 		printf("SWEET UFS: no contiguous DMA memory\n");
+@@ -623,6 +687,9 @@ sweet_ufs_init(void)
+ 
+ 	lck_mtx_lock(&sweet_ufs_lock);
+ 	error = ufs_take_over_host();
++	if (!error && su.exynos) {
++		error = ufs_wake_device();
++	}
+ 	if (!error) {
+ 		static const uint8_t tur[6] = { 0x00 };
+ 		/* The first command after the bootloader may report a unit attention. */
+@@ -651,9 +718,9 @@ sweet_ufs_init(void)
+ 	/* Only now, with the partition bounds known, can writes be allowed. */
+ 	su.writable = (rw != 0);
+ 	su.ready = true;
+-	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
++	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx%s\n",
+ 	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
+-	    su.writable ? "read-write" : "read-only", su.dma_pa);
++	    su.writable ? "read-write" : "read-only", su.dma_pa, su.exynos ? " (Exynos)" : "");
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */

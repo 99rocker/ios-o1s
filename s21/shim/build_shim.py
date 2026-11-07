@@ -67,18 +67,27 @@ def symbol(path, want):
 
 
 def main():
-    out = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "out"))
+    # --gictest / --ufstest: probes that then chain-boot LineageOS (mks21boot.py --chain)
+    tests = {"--gictest": ("gictest.c", "-DGICTEST", "out-gictest"),
+             "--ufstest": ("ufs.c", "-DUFSTEST", "out-ufstest")}
+    args = [a for a in sys.argv[1:] if a not in tests]
+    chosen = [tests[a] for a in sys.argv[1:] if a in tests]
+    if len(chosen) > 1:
+        sys.exit("pick one of --gictest / --ufstest")
+    out = os.path.abspath(args[0] if args else os.path.join(HERE, chosen[0][2] if chosen else "out"))
     os.makedirs(out, exist_ok=True)
+    sources = SOURCES + [c[0] for c in chosen]
+    cflags = CFLAGS + [c[1] for c in chosen]
     objs = []
-    for src in SOURCES:
+    for src in sources:
         obj = os.path.join(out, os.path.splitext(src)[0] + ".o")
-        zig("cc", *CFLAGS, "-c", src, "-o", obj)
+        zig("cc", *cflags, "-c", src, "-o", obj)
         objs.append(obj)
     bad = {os.path.basename(o): abs64_relocs(o) for o in objs[1:]}
     if any(bad.values()):
         sys.exit(f"absolute relocations in C objects: {bad}")
     elf = os.path.join(out, "shim.elf")
-    zig("cc", *CFLAGS, "-static", "-T", "shim.ld", "-Wl,--build-id=none", *objs, "-o", elf)
+    zig("cc", *cflags, "-static", "-T", "shim.ld", "-Wl,--build-id=none", *objs, "-o", elf)
     image = os.path.join(out, "Image")
     zig("objcopy", "-O", "binary", elf, image)
     end = symbol(elf, "_end")
