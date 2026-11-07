@@ -37,7 +37,7 @@
 #define PIN_SCL		0
 #define PIN_SDA		1
 #define TS_ADDR		0x48
-#define TOUCH_SECONDS	45
+#define TOUCH_SECONDS	8
 
 static inline uint32_t rd(uintptr_t a) { return *(volatile uint32_t *)a; }
 static inline void wr(uintptr_t a, uint32_t v) { *(volatile uint32_t *)a = v; __asm__ volatile("dsb sy" ::: "memory"); }
@@ -261,7 +261,7 @@ void test_touch(void)
 	con_hex2("SENSE", "on r=", (uint32_t)r, "", 0);
 	udelay(100000);
 
-	con_str("TOUCH", "touch the screen now (45 s)");
+	con_str("TOUCH", "touch the screen now (8 s)");
 	int live = con_set_row(0);
 	con_set_row(live);
 	uint32_t events = 0, errs = 0;

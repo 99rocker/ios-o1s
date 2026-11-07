@@ -126,6 +126,56 @@ void secondary_main(uint64_t idx)
 		__asm__ volatile("wfe");
 }
 
+/*
+ * Previous panic: XNU keeps its embedded panic log in /pram (mkadt_s21.py:
+ * the last 1 MiB of the 4 GiB at 0x8c0000000). If DRAM kept it across the
+ * forced restart, print the text after "panic(" so it can be photographed,
+ * then clear the marker so it is shown once.
+ */
+#define PRAM_BASE	0x9bff00000UL
+#define PRAM_SCAN	0x40000UL
+
+static void show_last_panic(void)
+{
+	volatile char *p = (volatile char *)PRAM_BASE;
+	uintptr_t at = PRAM_SCAN;
+	for (uintptr_t i = 0; i + 6 < PRAM_SCAN; i++) {
+		if (p[i] == 'p' && p[i + 1] == 'a' && p[i + 2] == 'n' && p[i + 3] == 'i' &&
+		    p[i + 4] == 'c' && p[i + 5] == '(') {
+			at = i;
+			break;
+		}
+	}
+	if (at == PRAM_SCAN) {
+		con_str("PANIC", "no saved panic in pram");
+		return;
+	}
+	con_str("PANIC", "previous boot panicked:");
+	char line[37];
+	int n = 0, lines = 0;
+	for (uintptr_t i = at; i < PRAM_SCAN && lines < 24; i++) {
+		char c = p[i];
+		if (c == 0)
+			break;
+		if (c == '\n' || n == 36) {
+			line[n] = 0;
+			con_str("", line);
+			lines++;
+			n = 0;
+			if (c == '\n')
+				continue;
+		}
+		line[n++] = (c >= 0x20 && c < 0x7f) ? c : '.';
+	}
+	if (n && lines < 24) {
+		line[n] = 0;
+		con_str("", line);
+	}
+	p[at] = 'P';	/* shown: do not match again */
+	__asm__ volatile("dsb sy" ::: "memory");
+	con_skip();
+}
+
 void shim_main(uint64_t dtb)
 {
 	stage = "display";
@@ -161,13 +211,15 @@ void shim_main(uint64_t dtb)
 #endif
 
 #ifdef TOUCHTEST
+	stage = "last panic";
+	show_last_panic();
 	stage = "touchtest";
 	test_touch();
 	con_skip();
-	con_str("IOS", "booting iOS in 5 s");
+	con_str("IOS", "booting iOS in 25 s (photo this)");
 	{
 		uint64_t t0 = rsr("cntpct_el0");
-		while (rsr("cntpct_el0") - t0 < 5ull * 26000000)
+		while (rsr("cntpct_el0") - t0 < 25ull * 26000000)
 			;
 	}
 #endif
