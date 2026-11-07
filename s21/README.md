@@ -149,6 +149,21 @@ Follows ios-sweet's own path (their patch 0021/0025 milestone, done on the Redmi
   - Wake the device with REQUEST SENSE + START STOP UNIT (Active) on W-LUN `0xD0` before any LU command.
   - DMA to normal RAM works (the UCD and data buffers were in `0x80xxxxxx`).
 
+## Milestone 4: iOS 16 lock screen on the S21 (2026-11-07)
+
+- `tools/write-userdata.sh` (from OrangeFox recovery, root ADB): wrote `ios16-root.img`
+  (16 GiB, iOS 16.7.16 20H392 for iPhone10,3) to `userdata` in 768 s; the read-back SHA-256
+  matched (`b1500997...`).
+- `out-ios/AP_s21.tar` (kernel 0083, ADT with the iPhone X `/product`, `rd=ufsroot0`):
+  launchd, SpringBoard (pid 26) and backboardd (pid 56) start; the sampler shows their threads
+  waiting in mach_msg. bluetoothd / fairplayd.H2 / xpcproxy respawn (no Apple hardware behind them).
+- About 19 minutes in, **the iOS 16 lock screen is drawn on the panel**: "Wednesday, December 31",
+  "4:19". No RTC yet, so the clock started at the Unix epoch (Dec 31 1969, US Pacific).
+- `out-ios-quiet/AP_s21.tar`: the same image with `sweetfb_noconsole=1` (kernel text stops once
+  the GUI presents; panics are still drawn).
+- Missing: touch (`slsi_ts`, I2C bus 4 address 0x48), keys (`s2mps23_key` via ACPM), RTC, battery,
+  SMP (`cpus=1`).
+
 ## Known risks (unverified until it runs)
 
 - **GIC under Samsung's hypervisor.** XNU programs the GICv3 distributor and redistributor directly, as Linux does on this phone. If the hypervisor traps any of it, the marks stop around the GIC setup.

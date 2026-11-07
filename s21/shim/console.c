@@ -61,6 +61,13 @@ static void fmt_hex(char *buf, uint64_t v, int digits)
 	buf[digits] = 0;
 }
 
+int con_set_row(int r)
+{
+	int old = row;
+	row = r;
+	return old;
+}
+
 void con_skip(void)
 {
 	row++;

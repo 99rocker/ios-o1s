@@ -11,6 +11,9 @@
 #include <stdint.h>
 #include "console.h"
 #include "loader.h"
+#ifdef TOUCHTEST
+#include "touch.h"
+#endif
 
 #define rsr(r) ({ uint64_t _v; __asm__ volatile("mrs %0, " r : "=r"(_v)); _v; })
 
@@ -155,6 +158,18 @@ void shim_main(uint64_t dtb)
 	ufs_report(dtb);
 	display_restore();
 	boot_linux(dtb);
+#endif
+
+#ifdef TOUCHTEST
+	stage = "touchtest";
+	test_touch();
+	con_skip();
+	con_str("IOS", "booting iOS in 5 s");
+	{
+		uint64_t t0 = rsr("cntpct_el0");
+		while (rsr("cntpct_el0") - t0 < 5ull * 26000000)
+			;
+	}
 #endif
 
 	stage = "loader";
