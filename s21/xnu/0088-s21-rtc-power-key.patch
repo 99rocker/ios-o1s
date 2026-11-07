@@ -1,0 +1,129 @@
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -36,7 +36,9 @@
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ extern kern_return_t thread_terminate(thread_t);
+ extern void sweet_hid_touch(int finger, int down, int x, int y);
++extern void sweet_hid_key(int key, int down);
+ extern unsigned int processor_avail_count;      /* osfmk/kern/processor.c */
++extern void clock_set_calendar_microtime(long secs, int usecs);  /* kern/clock.h */
+ void sweet_touch_init(void);
+ 
+ #define TS_PERIC0_PA     0x10430000u
+@@ -343,10 +345,10 @@
+ 
+ /* one PMIC command; returns the APM's ret byte (0 = ok) or < 0 on timeout */
+ static int
+-acpm_pmic(unsigned func, unsigned chan, unsigned reg, unsigned value, unsigned mask, uint8_t *out)
++acpm_pmic(unsigned func, unsigned type, unsigned chan, unsigned reg, unsigned value, unsigned mask, uint8_t *out)
+ {
+ 	acpm.seq = acpm.seq % 63 + 1;
+-	uint32_t cmd0 = 1u << 8 | (reg & 0xffu) | (chan & 0xfu) << 12 | acpm.seq << 16;
++	uint32_t cmd0 = (type & 0xfu) << 8 | (reg & 0xffu) | (chan & 0xfu) << 12 | acpm.seq << 16;
+ 	uint32_t cmd1 = (func & 0xffu) | (value & 0xffu) << 8 | (mask & 0xffu) << 16;
+ 	uint32_t front = acpm_rd(acpm.tx_front), next = (front + 1) % acpm.q_len;
+ 	for (unsigned i = 0; acpm_rd(acpm.tx_rear) == next; i++) {
+@@ -394,7 +396,7 @@
+ ts_rail(const char *name, unsigned chan, unsigned reg, unsigned vsel)
+ {
+ 	uint8_t v = 0, v2 = 0;
+-	int r = acpm_pmic(ACPM_READ, chan, reg, 0, 0, &v);
++	int r = acpm_pmic(ACPM_READ, 1, chan, reg, 0, 0, &v);
+ 	bool ok = r == 0 && ((v & 0x3fu) == vsel ||
+ 	    ((v & 0xc0u) == 0 && (v & 0x3fu) + 0x10u >= vsel && (v & 0x3fu) <= vsel + 4u));
+ 	if (!ok) {
+@@ -402,8 +404,8 @@
+ 		return;
+ 	}
+ 	if (v != (0xc0u | vsel)) {
+-		r = acpm_pmic(ACPM_UPDATE, chan, reg, 0xc0u | vsel, 0xffu, NULL);
+-		(void)acpm_pmic(ACPM_READ, chan, reg, 0, 0, &v2);
++		r = acpm_pmic(ACPM_UPDATE, 1, chan, reg, 0xc0u | vsel, 0xffu, NULL);
++		(void)acpm_pmic(ACPM_READ, 1, chan, reg, 0, 0, &v2);
+ 	} else {
+ 		v2 = v;
+ 	}
+@@ -422,6 +424,54 @@
+ 	delay(2000);
+ 	ts_rail("tsp_io (s2mps23 LDO27 1.8 V)", 0, 0x5f, 0x2c);
+ 	ts_sleep(400);                          /* IC boot */
++}
++
++/*
++ * S21 RTC + power key, both on the main PMIC (ACPM channel 0, type 0x01)
++ * except the RTC page (type 0x02), confirmed on the phone (shim pmictest):
++ *   RTC: CTRL 0x00 has BCD off, 24-hour; set UPDATE 0x02 bit0 (RUDR) to latch,
++ *        then read 7 binary bytes from 0x05: sec,min,hour,week,date,mon,year+2000.
++ *   Power key: STATUS1 0x0E bit0 = side button held (1) / released (0).
++ */
++#define PM_RTC          2
++#define RTC_BASE        0x05
++#define PM_STATUS1      0x0e
++
++static long
++days_from_civil(int y, int m, int d)   /* days since 1970-01-01, Howard Hinnant's algorithm */
++{
++	y -= m <= 2;
++	long era = (y >= 0 ? y : y - 399) / 400;
++	unsigned yoe = (unsigned)(y - era * 400);
++	unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
++	unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
++	return era * 146097 + (long)doe - 719468;
++}
++
++static void
++sweet_rtc_set(void)
++{
++	uint8_t b[7] = {0};
++	(void)acpm_pmic(ACPM_UPDATE, PM_RTC, 0, 0x02, 0x01, 0x01, NULL);   /* RUDR latch */
++	ts_sleep(20);
++	for (int i = 0; i < 7; i++) {
++		if (acpm_pmic(ACPM_READ, PM_RTC, 0, RTC_BASE + i, 0, 0, &b[i])) {
++			printf("SWEET RTC: read failed\n");
++			return;
++		}
++	}
++	int sec = b[0] & 0x7f, min = b[1] & 0x7f, hour = b[2] & 0x1f;
++	int date = b[4] & 0x3f, mon = b[5] & 0x0f, year = 2000 + (b[6] & 0x7f);
++	if (mon < 1 || mon > 12 || date < 1 || date > 31 || hour > 23) {
++		printf("SWEET RTC: implausible %04d-%02d-%02d %02d:%02d:%02d; clock left at epoch\n",
++		    year, mon, date, hour, min, sec);
++		return;
++	}
++	long days = days_from_civil(year, mon, date);
++	long secs = days * 86400L + hour * 3600L + min * 60L + sec;
++	clock_set_calendar_microtime(secs, 0);
++	printf("SWEET RTC: %04d-%02d-%02d %02d:%02d:%02d UTC -> %ld s; calendar set\n",
++	    year, mon, date, hour, min, sec, secs);
+ }
+ 
+ static void
+@@ -497,6 +547,11 @@
+ 	    ts.irq ? "reading on attn (gpa1-0 low)" : "polling every 10 ms",
+ 	    ts.maxx, ts.maxy, TS_PANEL_W, TS_PANEL_H);
+ 
++	/* The RTC and power key share the ACPM path, so set the clock here too. */
++	sweet_rtc_set();
++	printf("SWEET KEYS: side button via PMIC STATUS1\n");
++
++	int pwr = 0;
+ 	for (;;) {
+ 		/* attn mode still reads every 200 ms and while a finger is down */
+ 		if (!ts.irq || ts_attn() || ts.active || (++ticks % 20u) == 0) {
+@@ -512,6 +567,16 @@
+ 				errors = 0;
+ 			}
+ 		}
++		/* Power key (side button) = HID key 0: live level of STATUS1 bit0. */
++		if ((ticks & 1u) == 0) {
++			uint8_t st = 0;
++			if (acpm_pmic(ACPM_READ, 1, 0, PM_STATUS1, 0, 0, &st) == 0 &&
++			    (st & 1) != pwr) {
++				pwr = st & 1;
++				printf("SWEET KEYS: power %s\n", pwr ? "down" : "up");
++				sweet_hid_key(0, pwr);
++			}
++		}
+ 		ts_sleep(10);
+ 	}
+ out:
