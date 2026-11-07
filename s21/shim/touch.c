@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include "console.h"
 #include "touch.h"
+#include "acpm.h"
 
 #define rsr(r) ({ uint64_t _v; __asm__ volatile("mrs %0, " r : "=r"(_v)); _v; })
 
@@ -168,6 +169,50 @@ static uint32_t be32(const uint8_t *b)
 	return (uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3];
 }
 
+/*
+ * Touch rails through ACPM (Samsung o1s kernel, non-EVT0 tables):
+ *   tsp_avdd = s2mps24 (ACPM channel 1) LDO21S_CTRL 0x54, 3.0 V: vsel 0x30
+ *              (min 1.8 V + 25 mV steps)
+ *   tsp_io   = s2mps23 (ACPM channel 0) L27CTRL 0x5F, 1.8 V: vsel 0x2C
+ *              (min 0.7 V + 25 mV steps)
+ * Address type 1 = PMIC page. Enable = bits 7:6 = 11. A rail is switched on
+ * only if its voltage field already holds the expected value.
+ */
+static void rail(const char *name, unsigned chan, unsigned reg, unsigned vsel)
+{
+	uint8_t v = 0, v2 = 0;
+	int r = acpm_pmic(ACPM_READ, chan, 1, reg, 0, 0, &v);
+	con_hex2(name, "ret=", (uint32_t)r, "reg=", v);
+	/*
+	 * Phone run 3: LDO21S read 0x28 (2.8 V, off), not the 3.0 V Android
+	 * programs. Accept an off rail set anywhere in 2.6..3.1 V and program
+	 * the DT voltage together with the enable bits.
+	 */
+	int near = (v & 0xc0) == 0 && (v & 0x3f) >= vsel - 0x10 && (v & 0x3f) <= vsel + 0x04;
+	if (r != 0 || ((v & 0x3f) != vsel && !near)) {
+		con_str(name, "unexpected: left alone");
+		return;
+	}
+	if ((v & 0xff) != (0xc0 | vsel)) {
+		r = acpm_pmic(ACPM_UPDATE, chan, 1, reg, 0xc0 | vsel, 0xff, 0);
+		(void)acpm_pmic(ACPM_READ, chan, 1, reg, 0, 0, &v2);
+		con_hex2(name, "on ret=", (uint32_t)r, "now=", v2);
+	}
+}
+
+static void touch_power(void)
+{
+	int r = acpm_init();
+	if (r) {
+		con_hex2("ACPM", "init err=", (uint32_t)r, "", 0);
+		return;
+	}
+	rail("AVDD", 1, 0x54, 0x30);
+	udelay(2000);
+	rail("TSP IO", 0, 0x5f, 0x2c);
+	udelay(400000);		/* IC boot */
+}
+
 void test_touch(void)
 {
 	saved_con = rd(GPP4 + CON);
@@ -177,6 +222,7 @@ void test_touch(void)
 	con_hex2("GPP4", "con=", saved_con, "dat=", saved_dat);
 	con_hex2("", "pud=", saved_pud, "usi=", rd(USI_SWCONF));
 	con_hex2("GPA1", "con=", rd(GPA1 + CON), "dat=", rd(GPA1 + DAT));
+	touch_power();
 
 	/* Pins to GPIO input (released), DAT bits 0 so "output" drives low. */
 	wr(GPP4 + PUD, saved_pud & ~0xffu);

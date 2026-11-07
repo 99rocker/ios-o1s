@@ -71,14 +71,14 @@ def main():
     tests = {"--gictest": ("gictest.c", "-DGICTEST", "out-gictest"),
              "--ufstest": ("ufs.c", "-DUFSTEST", "out-ufstest"),
              # --touchtest: touch probe, then the normal iOS boot (no chain)
-             "--touchtest": ("touch.c", "-DTOUCHTEST", "out-touchtest")}
+             "--touchtest": ("touch.c acpm.c", "-DTOUCHTEST", "out-touchtest")}
     args = [a for a in sys.argv[1:] if a not in tests]
     chosen = [tests[a] for a in sys.argv[1:] if a in tests]
     if len(chosen) > 1:
         sys.exit("pick one of --gictest / --ufstest / --touchtest")
     out = os.path.abspath(args[0] if args else os.path.join(HERE, chosen[0][2] if chosen else "out"))
     os.makedirs(out, exist_ok=True)
-    sources = SOURCES + [c[0] for c in chosen]
+    sources = SOURCES + [s for c in chosen for s in c[0].split()]
     cflags = CFLAGS + [c[1] for c in chosen]
     objs = []
     for src in sources:

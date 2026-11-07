@@ -164,6 +164,30 @@ Follows ios-sweet's own path (their patch 0021/0025 milestone, done on the Redmi
 - Missing: touch (`slsi_ts`, I2C bus 4 address 0x48), keys (`s2mps23_key` via ACPM), RTC, battery,
   SMP (`cpus=1`).
 
+## Milestone 5: buttons work, iOS home screen (2026-11-07)
+
+- Kernel patch 0084 (`xnu/0084-s21-volume-keys.patch`, CI run 42399152075, kernel sha256
+  2c07abb9...): polls gpa0 DAT (0x14EC0004, read-only), volume keys active low.
+- `out-keys-touch/AP_s21.tar` (`sweetkeys=1`, `sweetfb_noconsole=1`, touch-probe shim): on the
+  phone the volume keys work, and **both volume keys together (Home) open the iOS home screen**
+  from the lock screen.
+- Touch probe result: pending (the first run gave up quickly and went on to iOS; the shim now
+  holds its result on screen for 30 s).
+
+## Milestone 6: touch works, iOS Settings open (2026-11-07)
+
+- The touch IC (Samsung LSI, ID AC 37 92 01, I2C 0x48) has no power after S-Boot. The shim
+  (`shim/acpm.c`, `shim/touch.c`) switches its rails on through ACPM IPC (mailbox 0x15900000,
+  SRAM 0x02039000 + initdata 0x8000, PMIC channel id 2): s2mps24 LDO21S_CTRL 0x54 = 0xF0
+  (3.0 V, was 0x28 = 2.8 V off), s2mps23 L27CTRL 0x5F = 0xEC (1.8 V). Rails stay on in iOS.
+- The bus is bit-banged on gpp4-0/1; the shim test read 2000+ finger events with 0 errors.
+  Coordinates are 0..4095 on both axes (scaled to 1080x2400).
+- Kernel patch 0085 (`xnu/0085-s21-slsi-touch.patch`, kernel sha256 47aca7ef...) feeds the
+  events to SweetHID: with `out-touch-1cpu/AP_s21.tar` (cpus=1, sweettouch=1) **touch works in
+  iOS: unlock, home screen, Settings**.
+- With cpus=8 the same image panics about 50 s after boot and the persistent log is not
+  written; suspect the Exynos UFS path under SMP. Open.
+
 ## Known risks (unverified until it runs)
 
 - **GIC under Samsung's hypervisor.** XNU programs the GICv3 distributor and redistributor directly, as Linux does on this phone. If the hypervisor traps any of it, the marks stop around the GIC setup.
