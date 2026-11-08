@@ -133,18 +133,25 @@ def build(seed=None, qemu=False, highmem=False):
     # 6-7 Cortex-A76), one homogeneous cluster. The kernel defaults to one
     # and uses cpus=N to select an initial prefix (N <= 8).
     # QEMU retains its original single-CPU tree: its MPIDRs differ from sweet.
+    # vili AMP (xnu patch 0087): cores 0-3 are the E cluster (A55, boot
+    # cluster, cluster-id 0) and cores 4-7 the P cluster (A78+X1, cluster-id 1).
+    # cluster-type is the integer 'E'/'P'. Matches venus (Xiaomi SM8350).
     cpu_nodes = []
     for core in range(1 if qemu else 8):
+        if core < 4:
+            cl_id, cl_type, cl_core = 0, ord('E'), core
+        else:
+            cl_id, cl_type, cl_core = 1, ord('P'), core - 4
         cpu_nodes.append(node(f'cpu{core}', [
             ph(),
             ('device_type', cstr('cpu')),
             ('compatible', cstr('qcom,kryo470') + cstr('ARM,v8')),
             ('reg', u32(core << 8)),  # actual MPIDR Aff1:Aff0, NOT logical ID
             ('cpu-id', u32(core)),   # descriptive: XNU assigns IDs by DT order
-            ('cluster-id', u32(0)),  # descriptive; see ml_parse_cpu_topology
-            ('cluster-type', u32(0)),  # homogeneous CLUSTER_TYPE_SMP, not AMP
+            ('cluster-id', u32(cl_id)),  # E=0 (A55), P=1 (A78+X1); see ml_parse_cpu_topology
+            ('cluster-type', u32(cl_type)),  # 'E'/'P' integer, CLUSTER_TYPE AMP
             ('die-cluster-id', u32(0)),
-            ('cluster-core-id', u32(core)),
+            ('cluster-core-id', u32(cl_core)),
             ('l2-cache-id', u32(core)),  # distinct per-core L2 nodes in live FDT
             ('l3-cache-id', u32(0)),     # shared L3
             ('state', cstr('running' if core == 0 else 'stopped')),
