@@ -1,0 +1,78 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index bec97fb..b0ddfce 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -589,6 +589,9 @@ SECURITY_READ_ONLY_LATE(uint64_t) vm_kernel_addrhash_salt_ext;
+  * Now running in a thread.  Kick off other services,
+  * invoke user bootstrap, enter pageout loop.
+  */
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++extern void sweet_beacon(unsigned slot, uint32_t argb);   /* vili boot beacons (pe_serial.c) */
++#endif
+ static void
+ kernel_bootstrap_thread(void)
+ {
+@@ -689,6 +692,10 @@ kernel_bootstrap_thread(void)
+ 	PE_init_iokit();
+ #endif
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(0, 0xffff0000u);   /* red: PE_init_iokit() returned */
++#endif
++
+ 	assert(ml_get_interrupts_enabled() == FALSE);
+ 
+ 	/*
+@@ -703,11 +710,19 @@ kernel_bootstrap_thread(void)
+ #endif
+ 	(void) spllo();         /* Allow interruptions */
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(1, 0xffff8000u);   /* orange: interrupts/preemption enabled (spllo) */
++#endif
++
+ 	/*
+ 	 * This will start displaying progress to the user, start as early as possible
+ 	 */
+ 	initialize_screen(NULL, kPEAcquireScreen);
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(2, 0xffffff00u);   /* yellow: initialize_screen() done */
++#endif
++
+ 	/*
+ 	 *	Initialize the shared region module.
+ 	 */
+@@ -744,6 +759,10 @@ kernel_bootstrap_thread(void)
+ 	load_static_trust_cache();
+ #endif
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(3, 0xff00ff00u);   /* green: trust caches loaded */
++#endif
++
+ 	kernel_startup_initialize_upto(STARTUP_SUB_LOCKDOWN);
+ 
+ 	/*
+@@ -759,6 +778,10 @@ kernel_bootstrap_thread(void)
+ 	kernel_bootstrap_log("machine_lockdown");
+ 	machine_lockdown();
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(4, 0xff0080ffu);   /* blue: machine_lockdown() done */
++#endif
++
+ #ifdef CONFIG_XNUPOST
+ 	kern_return_t result = kernel_list_tests();
+ 	result = kernel_do_post();
+@@ -783,6 +806,10 @@ kernel_bootstrap_thread(void)
+ 	kperf_init_early();
+ #endif
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(5, 0xff00ffffu);   /* cyan: about to call bsd_init() */
++#endif
++
+ 	/*
+ 	 *	Start the user bootstrap.
+ 	 */
