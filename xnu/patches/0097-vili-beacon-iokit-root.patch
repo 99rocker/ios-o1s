@@ -1,0 +1,70 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 49a5505..dbc57cc 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -58,7 +58,8 @@ static void sweet_log_start(void);
+  * near the bottom of the panel; the highest-numbered bar present = how far we
+  * reached. Remove once vili boots to the GUI.
+  */
+-static void
++void sweet_beacon(unsigned slot, uint32_t argb);
++void
+ sweet_beacon(unsigned slot, uint32_t argb)
+ {
+ 	static volatile uint32_t *beacon_fb;
+@@ -70,7 +71,7 @@ sweet_beacon(unsigned slot, uint32_t argb)
+ 	}
+ 	const unsigned stride = 4320u / 4u;     /* pixels per line */
+ 	const unsigned bar_h = 36u;
+-	unsigned y0 = 2400u - (6u - slot) * 44u;
++	unsigned y0 = 2400u - (8u - slot) * 44u;
+ 	for (unsigned y = 0; y < bar_h; y++) {
+ 		volatile uint32_t *line = beacon_fb + (uint64_t)(y0 + y) * stride;
+ 		for (unsigned x = 0; x < 1080u; x++) {
+diff --git a/iokit/Kernel/IOStartIOKit.cpp b/iokit/Kernel/IOStartIOKit.cpp
+index d74c063..c4b88b1 100644
+--- a/iokit/Kernel/IOStartIOKit.cpp
++++ b/iokit/Kernel/IOStartIOKit.cpp
+@@ -177,9 +177,16 @@ ConfigureIOKit(void)
+ 	gRootNub->configureDefaults();
+ }
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++extern "C" void sweet_beacon(unsigned slot, uint32_t argb);
++#endif
++
+ void
+ StartIOKitMatching(void)
+ {
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(6, 0xffff00ffu);   /* magenta: IOKit service matching starting */
++#endif
+ 	SOCD_TRACE_XNU(START_IOKIT);
+ 	assert(gRootNub != NULL);
+ 	bool ok = gRootNub->startIOServiceMatching();
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
+index e6c74aa..0e85cb4 100644
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -651,6 +651,10 @@ do_reboot:
+ 	return true;
+ }
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++extern "C" void sweet_beacon(unsigned slot, uint32_t argb);
++#endif
++
+ kern_return_t
+ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+     dev_t * root, u_int32_t * oflags )
+@@ -678,6 +682,10 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 
+ 	int xchar, dchar;
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(7, 0xffffffffu);   /* white: IOFindBSDRoot reached (root-device selection) */
++#endif
++
+ 	// stall here for anyone matching on the IOBSD resource to finish (filesystems)
+ 	matching = IOService::serviceMatching(gIOResourcesKey);
+ 	assert(matching);
