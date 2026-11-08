@@ -1,0 +1,15 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 04adde9..c2e2fc3 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -917,6 +917,10 @@ bsd_init(void)
+ 		printf("cannot mount root, errno = %d\n", err);
+ 	}
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(11, 0xffaa00ffu);   /* purple: vfs_mountroot() succeeded -- iOS root mounted */
++#endif
++
+ 	IOSecureBSDRoot(rootdevice);
+ 
+ 	mountlist.tqh_first->mnt_flag |= MNT_ROOTFS;
