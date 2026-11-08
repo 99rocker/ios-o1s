@@ -1,0 +1,26 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index b0ddfce..5ff4407 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -795,12 +795,21 @@ kernel_bootstrap_thread(void)
+ 	kernel_bootstrap_log("PE_lockdown_iokit");
+ 	PE_lockdown_iokit();
+ #endif
++
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(7, 0xffffffffu);   /* white: PE_lockdown_iokit() returned */
++#endif
++
+ 	/*
+ 	 * max_cpus must be nailed down by the time PE_lockdown_iokit() finishes,
+ 	 * at the latest
+ 	 */
+ 	vm_set_restrictions(machine_info.max_cpus);
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(8, 0xff80ff00u);   /* lime: vm_set_restrictions() returned */
++#endif
++
+ 
+ #if KPERF
+ 	kperf_init_early();
