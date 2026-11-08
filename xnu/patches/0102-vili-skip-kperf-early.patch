@@ -1,0 +1,20 @@
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index 5ff4407..7bb5b32 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -811,7 +811,14 @@ kernel_bootstrap_thread(void)
+ #endif
+ 
+ 
+-#if KPERF
++#if KPERF && !defined(ARM64_BOARD_CONFIG_SWEET)
++	/*
++	 * vili (SM8350): kperf_init_early() hangs here -- confirmed by beacons
++	 * (lime before it shows, cyan after it never does). kperf programs the PMU
++	 * via IMPDEF/PMC sysregs the SM8350 hypervisor traps (same class of issue
++	 * as the physical-timer trap handled in 0090). kperf is non-essential
++	 * performance telemetry; skip its early init so boot can continue to BSD.
++	 */
+ 	kperf_init_early();
+ #endif
+ 
