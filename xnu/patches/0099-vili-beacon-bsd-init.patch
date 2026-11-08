@@ -1,0 +1,64 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index bb2a2bf..01cf7fe 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -473,6 +473,9 @@ bsd_rooted_ramdisk(void)
+  * of the tro_ucred field so that the uthread structure can be
+  * used like any other.
+  */
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++extern void sweet_beacon(unsigned slot, uint32_t argb);   /* vili boot beacons */
++#endif
+ void
+ bsd_init(void)
+ {
+@@ -498,6 +501,10 @@ bsd_init(void)
+ #define bsd_init_kprintf(x, ...)
+ #endif
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(8, 0xff80ff00u);   /* lime: bsd_init() entered */
++#endif
++
+ 	throttle_init();
+ 
+ 	printf(copyright);
+@@ -691,6 +698,10 @@ bsd_init(void)
+ 	bsd_init_kprintf("calling vfsinit\n");
+ 	vfsinit();
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	sweet_beacon(9, 0xff00ffc0u);   /* teal: vfsinit() done (past mid bsd_init) */
++#endif
++
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ 	/* AMFI's MAC policy is built in on SWEET (bsd/kern/sweet_amfi.c). */
+ 	extern void sweet_amfi_policy_register(void);
+@@ -872,6 +883,9 @@ bsd_init(void)
+ 	while (TRUE) {
+ 		int err;
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++		sweet_beacon(10, 0xffff8000u);   /* orange: bsd_init reached setconf -> root mount */
++#endif
+ 		bsd_init_kprintf("calling setconf\n");
+ 		setconf();
+ #if CONFIG_NETBOOT
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index 5efc651..c6c81cd 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -744,11 +744,11 @@ void sweet_fbcon_bar(unsigned slot, uint32_t argb);
+ void
+ sweet_fbcon_bar(unsigned slot, uint32_t argb)
+ {
+-	if (fbcon_base == NULL || slot > 7 || fbcon_height < 400) {
++	if (fbcon_base == NULL || slot > 11 || fbcon_height < 600) {
+ 		return;
+ 	}
+ 	uint32_t bar_h = 36;
+-	uint32_t y0 = fbcon_height - (8 - slot) * 44;
++	uint32_t y0 = fbcon_height - (12 - slot) * 44;
+ 	if (y0 + bar_h > fbcon_height) {
+ 		return;
+ 	}
