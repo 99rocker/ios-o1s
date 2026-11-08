@@ -1,0 +1,27 @@
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -946,6 +946,23 @@
+ 			current_thread()->machine.kpcb = NULL;
+ 			(void) ml_set_interrupts_enabled(interrupt_state);
+ 			return;
++		} else if ((instr & 0xfff00000) == 0xd5100000 ||
++		    (instr & 0xfff00000) == 0xd5300000) {
++			/*
++			 * sweet/vili on non-Apple cores (Snapdragon 888): XNU writes/reads
++			 * Apple IMPDEF system registers this CPU does not implement
++			 * (e.g. fiq_context_init). On sweet's SM7150 these were tolerated;
++			 * the X1/A78 trap them as UNDEFINED. Skip the msr/mrs instead of
++			 * panicking (for mrs, deliver 0). Real bad instructions still panic.
++			 */
++			if ((instr & 0xfff00000) == 0xd5300000) {
++				uint32_t rt = instr & 0x1f;
++				if (rt < 29) {
++					saved_state64(state)->x[rt] = 0;
++				}
++			}
++			add_saved_state_pc(state, 4);
++			return;
+ 		} else {
+ 			panic("Undefined kernel instruction: pc=%p instr=%x", (void*)get_saved_state_pc(state), instr);
+ 		}
