@@ -1,0 +1,16 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 01cf7fe..04adde9 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -493,7 +493,11 @@ bsd_init(void)
+ 	platform_stall_panic_or_spin(PLATFORM_STALL_XNU_LOCATION_BSD_INIT);
+ #endif
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++#define DEBUG_BSDINIT 1   /* vili: print each bsd_init step so the last one names the hang */
++#else
+ #define DEBUG_BSDINIT 0
++#endif
+ 
+ #if DEBUG_BSDINIT
+ #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
