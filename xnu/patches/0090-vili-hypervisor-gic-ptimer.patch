@@ -1,0 +1,86 @@
+diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
+index a1f2a91..4772ec8 100644
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -2267,12 +2267,22 @@ _enable_timebase_event_stream(uint32_t bit_index)
+ /*
+  * Turn timer on, unmask that interrupt.
+  */
++#if defined(SWEET)
++extern uint32_t sweet_el1_ptimer;	/* pexpert/arm/pe_fiq.c */
++#endif
++
+ static void
+ _enable_virtual_timer(void)
+ {
+ 	uint64_t cntvctl = CNTV_CTL_EL0_ENABLE; /* One wants to use 32 bits, but "mrs" prefers it this way */
+ 
+ 	__builtin_arm_wsr64("CNTV_CTL_EL0", cntvctl);
++#if defined(SWEET)
++	/* lemonadep: CNTP_* is an undefined instruction at EL1 under the hypervisor */
++	if (!sweet_el1_ptimer) {
++		return;
++	}
++#endif
+ 	/* disable the physical timer as a precaution, as its registers reset to architecturally unknown values */
+ 	__builtin_arm_wsr64("CNTP_CTL_EL0", CNTP_CTL_EL0_IMASKED);
+ }
+diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+index 6089db9..9dbb18b 100644
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -20,6 +20,21 @@ MACHINE_TIMEOUT(gicr_wake_timeout_ns, "gicr-wake-timeout", GICR_WAKE_TIMEOUT_NS,
+ #if defined(SWEET)
+ /* Phone default; QEMU virt wires the architected virtual timer to INTID 27. */
+ SECURITY_READ_ONLY_LATE(uint32_t) sweet_vtimer_intid = SWEET_VTIMER_INTID;
++/*
++ * 0 when the ADT /arm-io/gic has "no-el1-physical-timer": the hypervisor
++ * (lemonadep, SM8350) leaves CNTHCTL_EL2.EL1PCEN clear, so any EL1 CNTP_*
++ * write is an undefined instruction. Read by machine_routines.c.
++ */
++SECURITY_READ_ONLY_LATE(uint32_t) sweet_el1_ptimer = 1;
++/*
++ * 0 when the ADT /arm-io/gic has "no-gicr-priority-writes": the SM8350
++ * hypervisor's virtual GIC (IIDR 0x47000070) answers GICR_IPRIORITYR
++ * writes with a synchronous external abort, unpredictably (measured with
++ * the lemonadep shim; IGROUPR0 and ISENABLER0 never faulted, and polling
++ * GICR_CTLR.RWP does not help). Priorities are only an ordering hint
++ * here: ICC_PMR_EL1 is 0xFF, so every priority below it is delivered.
++ */
++SECURITY_READ_ONLY_LATE(uint32_t) sweet_gicr_priority_writes = 1;
+ #endif
+ 
+ static vm_offset_t gicd_base;
+@@ -117,6 +132,14 @@ pe_init_fiq()
+ 			sweet_vtimer_intid = intid;
+ 		}
+ 		kprintf("SWEET GIC: virtual timer INTID %u\n", sweet_vtimer_intid);
++		if (SecureDTGetProperty(entry, "no-el1-physical-timer", &timer_prop, &timer_size) == kSuccess) {
++			sweet_el1_ptimer = 0;
++		}
++		if (SecureDTGetProperty(entry, "no-gicr-priority-writes", &timer_prop, &timer_size) == kSuccess) {
++			sweet_gicr_priority_writes = 0;
++		}
++		kprintf("SWEET GIC: EL1 physical timer %s, redistributor priority writes %s\n",
++		    sweet_el1_ptimer ? "used" : "not accessible", sweet_gicr_priority_writes ? "on" : "off");
+ #endif
+ 
+ 		vm_offset_t soc_base_phys = pe_arm_get_soc_base_phys();
+@@ -170,10 +193,15 @@ pe_init_fiq()
+ 	 * non-secure writes to it are ignored. Everything we own is Group 1 NS
+ 	 * and arrives as an IRQ (see sleh_irq). GICR_IGROUPR0 reads as zero
+ 	 * from the non-secure side even after this write; delivery still works.
++	 *
++	 * lemonadep: the hypervisor's virtual GIC rejects priority writes (see
++	 * sweet_gicr_priority_writes); the priorities are left as found.
+ 	 */
+ 	gicr_write32(GICR_IGROUPR0, 0xFFFFFFFF);
+-	for (unsigned int i = 0; i < 32; i += 4) {
+-		gicr_write32(GICR_IPRIORITYR0 + i, 0xA0A0A0A0);
++	if (sweet_gicr_priority_writes) {
++		for (unsigned int i = 0; i < 32; i += 4) {
++			gicr_write32(GICR_IPRIORITYR0 + i, 0xA0A0A0A0);
++		}
+ 	}
+ 	gicr_write32(GICR_ISENABLER0, (1U << sweet_vtimer_intid) | (1U << SWEET_IPI_SGI));
+ #else

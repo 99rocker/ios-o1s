@@ -164,7 +164,14 @@ def build(seed=None, qemu=False, highmem=False):
         ('interrupt-controller', b''),
         ('virtual-timer-intid', u32(QEMU_VTIMER_INTID if qemu else VTIMER_INTID)),
         ('reg', u64(gicd - SOC_BASE, GICD_SIZE, gicr - SOC_BASE, GICR_SIZE)),
-    ])
+        # vili/SM8350 hypervisor quirks (ios-lemonadep): EL1 physical-timer
+        # writes are undefined, and the virtual GIC aborts GICR priority
+        # writes -- which silently kills secondary CPUs during bring-up.
+        # These presence flags tell xnu patch 0090 to skip both.
+    ] + ([] if qemu else [
+        ('no-el1-physical-timer', b''),
+        ('no-gicr-priority-writes', b''),
+    ]))
     arm_io = node('arm-io', [
         ph(),
         ('device_type', cstr('sweet-io')),
