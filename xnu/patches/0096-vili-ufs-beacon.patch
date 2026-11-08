@@ -1,0 +1,91 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 6b926fe..49a5505 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -49,6 +49,36 @@ extern kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
+ extern void thread_deallocate(thread_t);
+ extern int hz;
+ static void sweet_log_start(void);
++
++/*
++ * vili boot-progress beacon. Paints a solid full-width colored bar at a fixed
++ * screen position so a single still photo shows how far boot got, even when the
++ * wrapping fbcon text is unreadable. FB is the bootloader splash at 0xEA600000
++ * (AppleCLCD 1080x2400, stride 4320), mapped once via ml_io_map. The bars stack
++ * near the bottom of the panel; the highest-numbered bar present = how far we
++ * reached. Remove once vili boots to the GUI.
++ */
++static void
++sweet_beacon(unsigned slot, uint32_t argb)
++{
++	static volatile uint32_t *beacon_fb;
++	if (beacon_fb == NULL) {
++		beacon_fb = (volatile uint32_t *)ml_io_map(0xea600000UL, 0x2300000UL);
++	}
++	if (beacon_fb == NULL) {
++		return;
++	}
++	const unsigned stride = 4320u / 4u;     /* pixels per line */
++	const unsigned bar_h = 36u;
++	unsigned y0 = 2400u - (6u - slot) * 44u;
++	for (unsigned y = 0; y < bar_h; y++) {
++		volatile uint32_t *line = beacon_fb + (uint64_t)(y0 + y) * stride;
++		for (unsigned x = 0; x < 1080u; x++) {
++			line[x] = argb;
++		}
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
++}
+ extern void sweet_sample_start(void);
+ extern void sweet_keys_init(void);
+ extern void sweet_touch_init(void);
+@@ -592,6 +622,8 @@ sweet_ufs_init(void)
+ 	char want[64] = "userdata";
+ 	int error;
+ 
++	sweet_beacon(1, 0xffff8000u);   /* orange: sweet_ufs_init entered */
++
+ 	if (SecureDTLookupEntry(NULL, "/sweet-ufs", &node) != kSuccess ||
+ 	    SecureDTGetProperty(node, "reg", (void const **)&reg, &size) != kSuccess ||
+ 	    size < 2 * sizeof(uintptr_t)) {
+@@ -621,6 +653,8 @@ sweet_ufs_init(void)
+ 	su.lun = 0;
+ 	su.secsize = DEV_BSIZE;
+ 
++	sweet_beacon(2, 0xffffff00u);   /* yellow: regs mapped + DMA allocated */
++
+ 	lck_mtx_lock(&sweet_ufs_lock);
+ 	error = ufs_take_over_host();
+ 	if (!error) {
+@@ -637,6 +671,8 @@ sweet_ufs_init(void)
+ 		return error;
+ 	}
+ 
++	sweet_beacon(3, 0xff00ff00u);   /* green: controller talks + partition found */
++
+ 	su.bmajor = bdevsw_add(-1, &sweet_ufs_bdevsw);
+ 	if (su.bmajor < 0) {
+ 		return ENXIO;
+@@ -654,12 +690,14 @@ sweet_ufs_init(void)
+ 	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
+ 	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
+ 	    su.writable ? "read-write" : "read-only", su.dma_pa);
++	sweet_beacon(4, 0xff0080ffu);   /* blue: ufsroot0 registered, su.ready=true */
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+ 	sweet_keys_init();
+ 	sweet_touch_init();
+ 	sweet_usb_probe();
++	sweet_beacon(5, 0xff00ffffu);   /* cyan: sweet_ufs_init fully done, HFS mount next */
+ 	return 0;
+ }
+ 
+@@ -811,6 +849,7 @@ int sweet_ufs_rootdev(dev_t *dev);
+ int
+ sweet_ufs_rootdev(dev_t *dev)
+ {
++	sweet_beacon(0, 0xffff0000u);   /* red: mountroot reached the UFS root path */
+ 	if (!su.ready) {
+ 		int error = sweet_ufs_init();
+ 		if (error) {
