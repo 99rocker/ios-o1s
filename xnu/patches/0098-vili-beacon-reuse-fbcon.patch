@@ -1,0 +1,73 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index dbc57cc..3f92e8a 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -58,27 +58,12 @@ static void sweet_log_start(void);
+  * near the bottom of the panel; the highest-numbered bar present = how far we
+  * reached. Remove once vili boots to the GUI.
+  */
++extern void sweet_fbcon_bar(unsigned slot, uint32_t argb);
+ void sweet_beacon(unsigned slot, uint32_t argb);
+ void
+ sweet_beacon(unsigned slot, uint32_t argb)
+ {
+-	static volatile uint32_t *beacon_fb;
+-	if (beacon_fb == NULL) {
+-		beacon_fb = (volatile uint32_t *)ml_io_map(0xea600000UL, 0x2300000UL);
+-	}
+-	if (beacon_fb == NULL) {
+-		return;
+-	}
+-	const unsigned stride = 4320u / 4u;     /* pixels per line */
+-	const unsigned bar_h = 36u;
+-	unsigned y0 = 2400u - (8u - slot) * 44u;
+-	for (unsigned y = 0; y < bar_h; y++) {
+-		volatile uint32_t *line = beacon_fb + (uint64_t)(y0 + y) * stride;
+-		for (unsigned x = 0; x < 1080u; x++) {
+-			line[x] = argb;
+-		}
+-	}
+-	__asm__ volatile ("dsb sy" ::: "memory");
++	sweet_fbcon_bar(slot, argb);
+ }
+ extern void sweet_sample_start(void);
+ extern void sweet_keys_init(void);
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index 19f27cd..5efc651 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -732,6 +732,34 @@ fbcon_clear_row(uint32_t row)
+ 	}
+ }
+ 
++/*
++ * vili boot-progress beacon: a solid full-width colored bar at a fixed y near
++ * the bottom of the panel, drawn through the console's own framebuffer mapping
++ * (fbcon_base). sweet_ufs.c's sweet_beacon() calls this instead of mapping the
++ * framebuffer a second time with ml_io_map -- that re-map paniced out of
++ * kmem_add_extra_claims. Eight slots (0..7); highest bar present = how far boot
++ * got. Remove once vili reaches the GUI.
++ */
++void sweet_fbcon_bar(unsigned slot, uint32_t argb);
++void
++sweet_fbcon_bar(unsigned slot, uint32_t argb)
++{
++	if (fbcon_base == NULL || slot > 7 || fbcon_height < 400) {
++		return;
++	}
++	uint32_t bar_h = 36;
++	uint32_t y0 = fbcon_height - (8 - slot) * 44;
++	if (y0 + bar_h > fbcon_height) {
++		return;
++	}
++	for (uint32_t y = 0; y < bar_h; y++) {
++		volatile uint32_t *line = fbcon_base + (y0 + y) * (fbcon_stride / 4);
++		for (uint32_t x = 0; x < fbcon_width; x++) {
++			line[x] = argb;
++		}
++	}
++}
++
+ static void
+ fbcon_newline(void)
+ {
