@@ -1,0 +1,61 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 3f92e8a..6fd2461 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -454,6 +454,14 @@ sweet_ufs_strategy(buf_t bp)
+ 		uint32_t want = MIN(count - done, BOUNCE_SIZE - skip);
+ 		uint32_t blocks = (skip + want + UFS_BLOCK - 1) / UFS_BLOCK;
+ 		void *bounce = (void *)(su.dma + DMA_BOUNCE);
++		/* vili diag: show live UFS activity on-screen (row0=transfer#, row1=block,
++		 * row2=request bytes) so a photo reveals loop vs stuck vs huge read. */
++		extern void sweet_fbcon_u32(unsigned row, uint32_t val, uint32_t set_argb);
++		static uint32_t ufs_io_count;
++		ufs_io_count++;
++		sweet_fbcon_u32(0, ufs_io_count, 0xff00ff00u);
++		sweet_fbcon_u32(1, (uint32_t)lba, rd ? 0xff00ffffu : 0xffff8000u);
++		sweet_fbcon_u32(2, count, 0xffffffffu);
+ 		if (rd) {
+ 			error = ufs_read_blocks(su.first_block + lba, blocks);
+ 			if (!error) {
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index c6c81cd..1017695 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -760,6 +760,37 @@ sweet_fbcon_bar(unsigned slot, uint32_t argb)
+ 	}
+ }
+ 
++/*
++ * vili diagnostic: draw a 32-bit value as 32 on/off squares at a fixed screen
++ * row, through the console's framebuffer mapping (no disk, no locks). A set bit
++ * is bright, a clear bit dim; bit 31 is leftmost. Lets a single photo read an
++ * exact counter/address even while everything else is wedged. Remove later.
++ */
++void sweet_fbcon_u32(unsigned row, uint32_t val, uint32_t set_argb);
++void
++sweet_fbcon_u32(unsigned row, uint32_t val, uint32_t set_argb)
++{
++	if (fbcon_base == NULL || fbcon_width < 32 * 30) {
++		return;
++	}
++	const uint32_t sq = 24, gap = 6, cell = sq + gap;   /* 30px per bit */
++	uint32_t y0 = 40 + row * (sq + 12);
++	if (y0 + sq >= fbcon_height) {
++		return;
++	}
++	for (uint32_t b = 0; b < 32; b++) {
++		uint32_t on = (val >> (31 - b)) & 1;
++		uint32_t c = on ? set_argb : 0xff303030u;
++		uint32_t x0 = 20 + b * cell;
++		for (uint32_t y = 0; y < sq; y++) {
++			volatile uint32_t *line = fbcon_base + (y0 + y) * (fbcon_stride / 4);
++			for (uint32_t x = 0; x < sq; x++) {
++				line[x0 + x] = c;
++			}
++		}
++	}
++}
++
+ static void
+ fbcon_newline(void)
+ {
