@@ -1,4 +1,4 @@
-diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+# retrigger2: GitHub macOS runner congestion
 index 6fd2461..542677d 100644
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
