@@ -1,8 +1,8 @@
 diff --git a/bsd/sweet_hfs/core/hfs_vfsops.c b/bsd/sweet_hfs/core/hfs_vfsops.c
-index 557430b..ea35834 100644
+index 557430b..b79f2d0 100644
 --- a/bsd/sweet_hfs/core/hfs_vfsops.c
 +++ b/bsd/sweet_hfs/core/hfs_vfsops.c
-@@ -172,9 +172,15 @@ static int hfs_journal_replay(vnode_t devvp, vfs_context_t context);
+@@ -172,6 +172,11 @@ static int hfs_journal_replay(vnode_t devvp, vfs_context_t context);
   * mount system call
   */
  
@@ -14,11 +14,16 @@ index 557430b..ea35834 100644
  int
  hfs_mount(struct mount *mp, vnode_t devvp, user_addr_t data, vfs_context_t context)
  {
+@@ -190,6 +195,8 @@ hfs_mount(struct mount *mp, vnode_t devvp, user_addr_t data, vfs_context_t conte
+ 	int retval = E_NONE;
+ 	u_int32_t cmdflags;
+ 
 +	sweet_fbcon_u32(3, 1, 0xff00ffffu);
- 
- #if HFS_LEAK_DEBUG
- 
-@@ -1117,6 +1123,8 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct hfs_mount_args *args,
++
+ 	if (data && (retval = copyin(data, (caddr_t)&args, sizeof(args)))) {
+ 		if (HFS_MOUNT_DEBUG) {
+ 			printf("hfs_mount: copyin returned %d for fs\n", retval);
+@@ -1117,6 +1124,8 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct hfs_mount_args *args,
  	u_int32_t device_features = 0;
  	int isssd;
  
@@ -27,7 +32,7 @@ index 557430b..ea35834 100644
  	ronly = mp && vfs_isrdonly(mp);
  	dev = vnode_specrdev(devvp);
  	cred = p ? vfs_context_ucred(context) : NOCRED;
-@@ -1256,14 +1264,18 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct hfs_mount_args *args,
+@@ -1256,14 +1265,18 @@ hfs_mountfs(struct vnode *devvp, struct mount *mp, struct hfs_mount_args *args,
  
  	mdb_offset = (daddr64_t)HFS_PRI_SECTOR(log_blksize);
  
