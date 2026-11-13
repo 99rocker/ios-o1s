@@ -1,0 +1,23 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 542677d..6c044ae 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -406,6 +406,9 @@ ufs_take_over_host(void)
+ static int
+ sweet_ufs_open(__unused dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
+ {
++	extern void sweet_fbcon_u32(unsigned row, uint32_t val, uint32_t set_argb);
++	static uint32_t n_open;
++	sweet_fbcon_u32(3, ++n_open, 0xff00ff00u);   /* row3 (green): device open count */
+ 	if (!su.ready) {
+ 		return ENXIO;
+ 	}
+@@ -501,6 +504,8 @@ sweet_ufs_ioctl(__unused dev_t dev, u_long cmd, caddr_t data, __unused int flag,
+ {
+ 	uint32_t *f = (uint32_t *)data;
+ 	uint64_t *o = (uint64_t *)data;
++	extern void sweet_fbcon_u32(unsigned row, uint32_t val, uint32_t set_argb);
++	sweet_fbcon_u32(4, (uint32_t)cmd, 0xff00ffffu);   /* row4 (cyan): last ioctl cmd reached */
+ 
+ 	switch (cmd) {
+ 	case DKIOCGETBLOCKSIZE:
