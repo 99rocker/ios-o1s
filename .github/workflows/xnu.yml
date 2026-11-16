@@ -124,3 +124,5 @@ jobs:
           name: xnu-kernel
           path: out/
           if-no-files-found: warn
+
+# retrigger: macos arm64 runner capacity fluke on run #31 (2026-11-16)
