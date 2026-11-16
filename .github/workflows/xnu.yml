@@ -37,10 +37,10 @@ jobs:
     # S21 fork: GitHub retired macos-14 (Xcode 15) on 2026-11-02 and no hosted image
     # ships Xcode 15 any more. Use macos-15's oldest Xcode (16.0); its iig emits
     # IORPC.kernelContent, which patch 0082 backports from xnu-11215.
-    # j606F: arm64 macos-15 runners would not acquire (#31/#32 "job not acquired
-    # by Runner... capacity constraints"). macos-15-large is the Intel x86_64 pool
-    # (different capacity, same Xcode 16); it cross-builds the arm64/arm64e kernel.
-    runs-on: macos-15-large
+    # j606F: macos-15-large (Intel) is not available on this account (job failed to
+    # acquire in 3s, #33). Back to arm64 macos-15 (the only free-tier image with
+    # Xcode 16, which iig/patch 0082 needs); retry until the capacity shortage clears.
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
