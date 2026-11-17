@@ -45,12 +45,20 @@ import sys
 EDITS = {
     # CPU arch: sweet runs on Kryo 470 (Cortex-A76, ARMv8.2) which has FEAT_LSE;
     # j606F runs XNU on the Snapdragon 662 Cortex-A73 gold cores, which are
-    # ARMv8.0 and do NOT implement LSE atomics (ldadd/cas/swp) or PAN. Build at
-    # armv8-a so clang emits ll/sc (ldxr/stxr) atomics instead. Confirmed on
-    # device: an armv8.2 build panics "Undefined kernel instruction" on the
-    # first LDADD (sleh.c), four stages into arm_init.
+    # ARMv8.0 and do NOT implement LSE atomics (ldadd/cas/swp) or PAN. An
+    # armv8.2 build panics "Undefined kernel instruction" on the first LDADD
+    # (sleh.c), four stages into arm_init.
+    #   NOTE: -march=armv8-a alone is NOT enough. The kernel builds with
+    #   SDKROOT=macosx (an Apple target), whose driver injects a default
+    #   LSE-capable Apple CPU; -march does not strip a CPU-provided feature, so
+    #   876 LSE instructions survived and it still panicked (verified by
+    #   disassembling the artifact). Pin the CPU explicitly to cortex-a73
+    #   (stops the default-CPU injection; fixes both codegen and the __ARM_*
+    #   feature macros so PAN/LSE code is not compiled) and force the lse
+    #   backend feature off as belt-and-suspenders.
     "0004-sweet-machine-config.patch": [
-        ("-march=armv8.2-a+crypto", "-march=armv8-a+crypto", 1),
+        ("-march=armv8.2-a+crypto",
+         "-mcpu=cortex-a73+crypto -Xclang -target-feature -Xclang -lse", 1),
     ],
     "0010-sweet-early-framebuffer-debug.patch": [
         ("0x9c000000", "0x5c000000", 3),
