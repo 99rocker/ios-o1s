@@ -10,9 +10,23 @@ touch the same file still match.
 
   0010, 0012  early framebuffer console: 0x9c000000 (sweet cont_splash)
               -> 0x5c000000 (j606F cont_splash_region@5c000000, measured on the
-              device). Everything else the kernel needs (GIC 0x0f200000, timer
-              19.2 MHz, vtimer INTID 19, RAM, CPUs, fb geometry 1200x2000) comes
-              from the ADT (j606F/tools/mkadt_j606F.py).
+              device). The early console (sweet_early.c + the start.s Stage-0
+              band) hardcodes the PANEL geometry too, and it is NOT ADT-driven:
+              sweet is 1080x2400 stride 4320, j606F is 1200x2000 stride 4800.
+              Left unfixed, every early marker renders sheared or off-screen on
+              the P11 panel (row 2368 is past its 2000 rows), so XNU looks hung
+              even while it runs. So also rewrite:
+                EARLY_WIDTH 1080 -> 1200, EARLY_HEIGHT 2400 -> 2000,
+                EARLY_STRIDE 4320/4 -> 4800/4, and the Stage-0 band in start.s
+                (0x..+2368*4320, mov x4 #4320) -> (0x..+1000*4800, #4800).
+              The GIC 0x0f200000, timer 19.2 MHz, vtimer INTID 19, RAM and CPUs
+              still come from the ADT (j606F/tools/mkadt_j606F.py).
+
+  MEMORY: build the ADT WITHOUT --highmem. The start.s bootstrap framebuffer
+              mapping assumes "all bring-up RAM is below 4GB"; phys_base at
+              0x100000000 (highmem) breaks that bootstrap page-table math and
+              hangs arm_vm_init. j606F boots on the low bank 0x80000000 (2GB,
+              carve-out free).
 
 Unlike the S21 (Exynos) series, j606F does NOT change the PSCI conduit: Qualcomm
 TrustZone uses `smc` (confirmed on device: PSCI v1.0 via smc). So patch 0065 is
@@ -29,8 +43,20 @@ import os
 import sys
 
 EDITS = {
-    "0010-sweet-early-framebuffer-debug.patch": [("0x9c000000", "0x5c000000", 3)],
-    "0012-sweet-keep-debug-console-after-ttbr0.patch": [("0x9c000000", "0x5c000000", 3)],
+    "0010-sweet-early-framebuffer-debug.patch": [
+        ("0x9c000000", "0x5c000000", 3),
+        ("2368 * 4320", "1000 * 4800", 1),   # Stage-0 band: visible row + j606F stride
+        ("#4320", "#4800", 1),               # Stage-0 band stride (mov x4)
+        ("EARLY_WIDTH 1080u", "EARLY_WIDTH 1200u", 1),
+        ("EARLY_HEIGHT 2400u", "EARLY_HEIGHT 2000u", 1),
+        ("(4320u / 4)", "(4800u / 4)", 1),
+    ],
+    "0012-sweet-keep-debug-console-after-ttbr0.patch": [
+        ("0x9c000000", "0x5c000000", 3),
+        ("EARLY_WIDTH 1080u", "EARLY_WIDTH 1200u", 1),
+        ("EARLY_HEIGHT 2400u", "EARLY_HEIGHT 2000u", 1),
+        ("(4320u / 4)", "(4800u / 4)", 1),
+    ],
 }
 
 
