@@ -43,6 +43,15 @@ import os
 import sys
 
 EDITS = {
+    # CPU arch: sweet runs on Kryo 470 (Cortex-A76, ARMv8.2) which has FEAT_LSE;
+    # j606F runs XNU on the Snapdragon 662 Cortex-A73 gold cores, which are
+    # ARMv8.0 and do NOT implement LSE atomics (ldadd/cas/swp) or PAN. Build at
+    # armv8-a so clang emits ll/sc (ldxr/stxr) atomics instead. Confirmed on
+    # device: an armv8.2 build panics "Undefined kernel instruction" on the
+    # first LDADD (sleh.c), four stages into arm_init.
+    "0004-sweet-machine-config.patch": [
+        ("-march=armv8.2-a+crypto", "-march=armv8-a+crypto", 1),
+    ],
     "0010-sweet-early-framebuffer-debug.patch": [
         ("0x9c000000", "0x5c000000", 3),
         ("2368 * 4320", "1000 * 4800", 1),   # Stage-0 band: visible row + j606F stride
