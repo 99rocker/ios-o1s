@@ -56,9 +56,15 @@ EDITS = {
     #   (stops the default-CPU injection; fixes both codegen and the __ARM_*
     #   feature macros so PAN/LSE code is not compiled) and force the lse
     #   backend feature off as belt-and-suspenders.
+    #   -mno-outline-atomics is REQUIRED: with LSE off, clang otherwise lowers
+    #   atomics to calls into compiler-rt outline helpers (__aarch64_ldadd4,
+    #   __aarch64_cas4, ...) which the freestanding kernel does not link, so the
+    #   build fails at link with undefined symbols (confirmed: run #52, exit 2
+    #   after a full ~9 min compile). -mno-outline-atomics inlines ll/sc.
     "0004-sweet-machine-config.patch": [
         ("-march=armv8.2-a+crypto",
-         "-mcpu=cortex-a73+crypto -Xclang -target-feature -Xclang -lse", 1),
+         "-mcpu=cortex-a73+crypto -Xclang -target-feature -Xclang -lse "
+         "-mno-outline-atomics", 1),
     ],
     "0010-sweet-early-framebuffer-debug.patch": [
         ("0x9c000000", "0x5c000000", 3),
